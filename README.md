@@ -25,8 +25,32 @@
 
 - Windows 10/11；
 - 已登录的微信桌面客户端；
-- [VB-CABLE](https://vb-audio.com/Cable/) 虚拟音频设备；
+- 标准版 VB-CABLE Virtual Audio Device；
 - 一个能够返回音频的 HTTP TTS 接口。
+
+## 安装 VB-CABLE
+
+本项目需要的是 VB-Audio 提供的**标准版单根 VB-CABLE**：
+
+- 产品名称：`VB-CABLE Virtual Audio Device`；
+- Windows 安装包：`VBCABLE_Driver_Pack45.zip`；
+- [VB-Audio 官方产品页面](https://vb-audio.com/Cable/)；
+- [直接下载 Windows 驱动包](https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip)。
+
+不需要购买或安装 `VB-CABLE A+B`、`VB-CABLE C+D`、`Hi-Fi Cable` 或
+`VoiceMeeter`。标准版 VB-CABLE 已经能够完成本项目需要的单路音频转发。
+
+安装步骤：
+
+1. 下载并完整解压 `VBCABLE_Driver_Pack45.zip`，不要直接在 ZIP 中运行安装程序；
+2. 64 位 Windows 右键点击 `VBCABLE_Setup_x64.exe`，选择“以管理员身份运行”；
+3. 点击安装驱动，完成后**必须重启 Windows**；
+4. 重启后，声音设备列表中应出现播放端 `CABLE Input` 和录音端
+   `CABLE Output`；
+5. 将 Windows 默认输入/麦克风设为 `CABLE Output`。
+
+音频会从程序使用的 `CABLE Input` 播放端进入，再从微信使用的
+`CABLE Output` 麦克风端输出。
 
 ## 快速开始
 
@@ -35,7 +59,9 @@
 1. 从 [Releases](https://github.com/AEVEC/wechat-tts-voice-bubble/releases)
    下载 `WeChatTTS-win-x64.zip`。
 2. 解压整个 `WeChatTTS` 文件夹，不要只复制其中的 EXE。
-3. 安装 VB-CABLE，然后重启 Windows。
+3. 按照上面的说明安装标准版
+   [`VBCABLE_Driver_Pack45.zip`](https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip)，
+   然后重启 Windows。
 4. 在 Windows 声音设置中，将默认输入设备设为
    `CABLE Output (VB-Audio Virtual Cable)`。
 5. 打开微信，并进入准备接收语音的聊天。
