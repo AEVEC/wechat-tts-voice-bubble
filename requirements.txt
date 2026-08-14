@@ -1,0 +1,9 @@
+customtkinter==5.2.2
+affine==2.4.0
+numpy==2.3.2
+psutil==7.0.0
+PyAutoGUI==0.9.54
+requests==2.32.4
+resvg==0.2.0
+sounddevice==0.5.2
+soundfile==0.13.1
