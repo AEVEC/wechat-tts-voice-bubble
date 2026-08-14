@@ -1,16 +1,23 @@
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$pythonPath = "C:\Users\win\miniforge3\envs\wechat-tts-voice\python.exe"
+$pythonCandidates = @(
+    $env:WECHAT_TTS_PYTHON,
+    $(if ($env:CONDA_PREFIX) { Join-Path $env:CONDA_PREFIX "python.exe" }),
+    $(Join-Path $env:USERPROFILE "miniforge3\envs\wechat-tts-voice\python.exe"),
+    $((Get-Command python.exe -ErrorAction SilentlyContinue).Source)
+) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
+
+if (-not $pythonCandidates) {
+    throw "Python was not found. Activate the wechat-tts-voice environment or set WECHAT_TTS_PYTHON."
+}
+
+$pythonPath = $pythonCandidates[0]
 $environmentRoot = Split-Path -Parent $pythonPath
 $appName = "WeChatTTS"
 $distDir = Join-Path $projectRoot "dist\$appName"
 $releaseDir = Join-Path $projectRoot "release"
 $zipPath = Join-Path $releaseDir "$appName-win-x64.zip"
-
-if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
-    throw "Build environment not found: $pythonPath"
-}
 
 Push-Location $projectRoot
 $originalPath = $env:PATH

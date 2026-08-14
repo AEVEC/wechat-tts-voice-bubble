@@ -1,66 +1,152 @@
-# 微信 TTS 语音发送工具
+# wechat-tts-voice-bubble
 
-本工具调用现有 TTS 服务生成 WAV，再将音频播放到 VB-CABLE。微信从
-`CABLE Output` 虚拟麦克风录音，因此接收方看到的是正常语音气泡。
+一个用于 Windows 微信桌面客户端的 TTS 语音挂件。输入文字后，程序调用 TTS
+接口生成音频，通过 VB-CABLE 将音频送入微信麦克风，并发送为原生语音气泡，而不是
+音频文件附件。
+
+> 本项目使用桌面 UI 自动化操作当前打开的微信聊天，不修改微信进程，也不使用私有协议。
 
 ## 软件截图
 
 ![微信 TTS 语音挂件界面](design/material-widget-mockup.png)
 
-## 首次配置
+## 功能
 
-1. 安装 VB-CABLE 并按安装器要求重启 Windows。
-2. 在微信音频设置中，将麦克风选择为
-   `CABLE Output (VB-Audio Virtual Cable)`。如果微信没有设备选择项，
-   可将它暂时设为 Windows 默认输入设备。
-3. 使用新的 TTS Token。不要继续使用已经公开过的 Token。
+- Material 风格的图形界面，无需在命令行中发送消息；
+- 输入文字后，一键发送到微信当前打开的聊天；
+- 支持 `Ctrl+Enter` 快捷发送；
+- 自动检查微信窗口、RDP 会话、默认麦克风和 VB-CABLE 播放设备；
+- 自动调用 TTS、进入微信录音模式、播放音频并点击发送；
+- WASAPI 不可用时自动尝试 DirectSound 和 MME；
+- Bearer Token 使用 Windows DPAPI 加密后保存在当前用户目录；
+- 单条语音最长 58 秒。
 
-## 使用
+## 环境要求
 
-在 PowerShell 中为当前窗口设置 Token：
+- Windows 10/11；
+- 已登录的微信桌面客户端；
+- [VB-CABLE](https://vb-audio.com/Cable/) 虚拟音频设备；
+- 一个能够返回音频的 HTTP TTS 接口。
 
-```powershell
-$env:TTS_TOKEN = "替换为新Token"
-```
+## 快速开始
 
-发送前先打开目标微信聊天窗口，然后执行：
+### 使用发行版
 
-```powershell
-& "C:\Users\win\wechat-tts-voice\send-voice.cmd" "你好，这里是小菲。"
-```
+1. 从 [Releases](https://github.com/AEVEC/wechat-tts-voice-bubble/releases)
+   下载 `WeChatTTS-win-x64.zip`。
+2. 解压整个 `WeChatTTS` 文件夹，不要只复制其中的 EXE。
+3. 安装 VB-CABLE，然后重启 Windows。
+4. 在 Windows 声音设置中，将默认输入设备设为
+   `CABLE Output (VB-Audio Virtual Cable)`。
+5. 打开微信，并进入准备接收语音的聊天。
+6. 运行 `WeChatTTS.exe`。
+7. 点击右上角设置按钮，填写 TTS 接口地址和 Bearer Token。
+8. 输入文字，等待状态显示设备已连接，然后点击“发送语音”。
 
-程序在生成音频后会倒计时 5 秒。倒计时期间保持正确的微信聊天窗口位于最前面。
-若前台程序不是微信，程序会取消发送。
+程序会自动切换到微信当前聊天。发送前请自行确认当前联系人或群聊是否正确。
 
-仅测试 TTS 并保存 WAV：
-
-```powershell
-& "C:\Users\win\wechat-tts-voice\send-voice.cmd" `
-  --save-wav "C:\Users\win\wechat-tts-voice\test.wav" `
-  "你好，这里是小菲。"
-```
-
-列出可用的音频播放设备：
-
-```powershell
-& "C:\Users\win\wechat-tts-voice\send-voice.cmd" --list-devices
-```
-
-## Conda 环境
-
-环境名称：`wechat-tts-voice`
+### 从源码运行
 
 ```powershell
-& "C:\Users\win\miniforge3\Scripts\activate.bat" wechat-tts-voice
+conda create -n wechat-tts-voice python=3.11 -y
+conda activate wechat-tts-voice
+pip install -r requirements.txt
+pythonw wechat_tts_widget.pyw
 ```
 
-单条语音默认最多 58 秒。更长文本请拆分后发送。
+也可以双击项目中的 `启动微信TTS挂件.vbs`。
 
-## 远程桌面限制
+## TTS 接口格式
 
-在 Windows 远程桌面（RDP）会话中，远程电脑本机的录音端点通常不会暴露给
-微信。此时即使 VB-CABLE 已正常安装，微信仍可能显示“未找到麦克风”。需要在
-电脑的本地控制台会话中运行微信，或改用不会隔离主机音频设备的远控方式。
+挂件会向设置中的接口发送以下请求：
 
-程序优先读取 Windows WTS 的实时会话协议。`SESSIONNAME` 仅在 WTS 查询失败时
-作为兜底，因为从远程桌面返回本地控制台后，该环境变量可能仍残留为 `RDP-Tcp`。
+```http
+POST /v1/tts
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+```json
+{
+  "text": "要转换成语音的文字",
+  "text_lang": "zh"
+}
+```
+
+接口应直接返回可由 libsndfile 读取的音频内容，例如 WAV；不要返回 JSON 包装或下载
+地址。默认接口地址为 `http://ws:8000/v1/tts`，可在设置窗口中修改。
+
+## 工作原理
+
+```text
+文字 → TTS 接口 → WAV → CABLE Input（播放端）
+                              ↓
+                    CABLE Output（麦克风端）
+                              ↓
+                    微信录音 → 原生语音气泡
+```
+
+挂件在发送前检查当前会话和设备状态，然后激活唯一的微信主窗口，通过界面坐标进入
+语音录制模式。音频播放完成后，它会点击微信发送控件并验证录音模式已经退出。
+
+## 配置与日志
+
+配置文件和日志位于：
+
+```text
+%APPDATA%\WeChatTTSWidget\
+```
+
+- `config.json`：TTS 地址、DPAPI 加密后的 Token 和窗口位置；
+- `widget.log`：运行及发送日志。
+
+发行包不会包含本机配置、Token 或日志。换到另一台电脑后需要重新配置。
+
+## 常见问题
+
+### 提示默认麦克风不是 CABLE Output
+
+在 Windows 声音设置中把 `CABLE Output` 设为默认输入设备，然后重新打开微信和挂件。
+`CABLE Input` 是程序播放音频的一端，`CABLE Output` 才是微信使用的麦克风端。
+
+### 提示未找到微信主窗口
+
+确认微信已经登录并显示主窗口，而不是只在系统托盘中运行。当前版本要求恰好存在一个
+可用的微信主窗口。
+
+### RDP 或锁屏环境无法发送
+
+Windows 远程桌面和锁屏可能隔离录音设备或使 UI 自动化失效。请在本地控制台会话中
+运行，或者使用不会切换 Windows 会话的远控方式。
+
+### 点击后没有进入录音模式
+
+保持微信窗口尺寸不小于 `650×500`，确认当前聊天支持发送语音。微信界面更新后，录音
+按钮位置可能变化，需要重新适配 UI 坐标。
+
+## 构建 Windows 发行包
+
+先安装构建依赖：
+
+```powershell
+pip install -r requirements-build.txt
+```
+
+然后运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build-release.ps1
+```
+
+构建结果位于：
+
+```text
+release\WeChatTTS-win-x64.zip
+```
+
+## 注意事项
+
+- 程序发送给微信当前打开的聊天，无法可靠读取微信自绘界面中的联系人名称；
+- 微信客户端更新可能导致 UI 自动化坐标失效；
+- 请勿将 TTS Token、`config.json` 或日志提交到公开仓库；
+- 请合理使用自动化功能，避免批量发送、骚扰或违反平台规则的行为。
