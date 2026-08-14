@@ -3,6 +3,10 @@
 本工具调用现有 TTS 服务生成 WAV，再将音频播放到 VB-CABLE。微信从
 `CABLE Output` 虚拟麦克风录音，因此接收方看到的是正常语音气泡。
 
+## 软件截图
+
+![微信 TTS 语音挂件界面](design/material-widget-mockup.png)
+
 ## 首次配置
 
 1. 安装 VB-CABLE 并按安装器要求重启 Windows。
