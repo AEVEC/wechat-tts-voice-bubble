@@ -41,7 +41,9 @@ try {
         throw "Build completed but $appName.exe was not found"
     }
 
-    Copy-Item -LiteralPath "$projectRoot\README-zh-CN.txt" -Destination "$distDir\README-zh-CN.txt" -Force
+    foreach ($fileName in @("README-zh-CN.txt", "LICENSE", "THIRD_PARTY_NOTICES.md")) {
+        Copy-Item -LiteralPath "$projectRoot\$fileName" -Destination "$distDir\$fileName" -Force
+    }
 
     New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
     if (Test-Path -LiteralPath $zipPath) {

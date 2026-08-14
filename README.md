@@ -1,5 +1,7 @@
 # wechat-tts-voice-bubble
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 一个用于 Windows 微信桌面客户端的 TTS 语音挂件。输入文字后，程序调用 TTS
 接口生成音频，通过 VB-CABLE 将音频送入微信麦克风，并发送为原生语音气泡，而不是
 音频文件附件。
@@ -176,3 +178,10 @@ release\WeChatTTS-win-x64.zip
 - 微信客户端更新可能导致 UI 自动化坐标失效；
 - 请勿将 TTS Token、`config.json` 或日志提交到公开仓库；
 - 请合理使用自动化功能，避免批量发送、骚扰或违反平台规则的行为。
+
+## 开源许可
+
+本项目采用 [MIT License](LICENSE)，版权所有 © 2026 AEVEC。发行包所包含的
+第三方组件仍遵循各自的许可证，详见
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。VB-CABLE 不包含在本项目或
+发行包中，需要由用户从 VB-Audio 官方网站单独下载和安装。
