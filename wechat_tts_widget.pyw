@@ -5,7 +5,9 @@ import ctypes
 import json
 import logging
 import os
+import queue
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -30,7 +32,9 @@ APP_NAME = "微信 TTS 挂件"
 CONFIG_DIR = Path(os.getenv("APPDATA", str(Path.home()))) / "WeChatTTSWidget"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 LOG_FILE = CONFIG_DIR / "widget.log"
-ICON_DIR = Path(__file__).resolve().parent / "assets" / "material_symbols"
+ASSET_DIR = Path(__file__).resolve().parent / "assets"
+ICON_DIR = ASSET_DIR / "material_symbols"
+APP_ICON_PATH = ASSET_DIR / "app-icon.ico"
 DEFAULT_GEOMETRY = "500x550+40+120"
 WECHAT_NAMES = {"weixin.exe", "wechat.exe"}
 
@@ -48,6 +52,81 @@ TONAL = "#EAF6EF"
 ERROR = "#B84235"
 ERROR_SURFACE = "#FFF0ED"
 FONT_FAMILY = "Microsoft YaHei UI"
+
+WM_APP = 0x8000
+WM_CLOSE = 0x0010
+WM_DESTROY = 0x0002
+WM_HOTKEY = 0x0312
+WM_LBUTTONUP = 0x0202
+WM_LBUTTONDBLCLK = 0x0203
+WM_RBUTTONUP = 0x0205
+WM_NULL = 0x0000
+TRAY_CALLBACK_MESSAGE = WM_APP + 1
+TRAY_ICON_ID = 1
+HOTKEY_ID = 0x5754
+MOD_ALT = 0x0001
+MOD_CONTROL = 0x0002
+MOD_NOREPEAT = 0x4000
+VK_Z = 0x5A
+NIM_ADD = 0x00000000
+NIM_DELETE = 0x00000002
+NIF_MESSAGE = 0x00000001
+NIF_ICON = 0x00000002
+NIF_TIP = 0x00000004
+MF_STRING = 0x00000000
+MF_SEPARATOR = 0x00000800
+TPM_RIGHTBUTTON = 0x0002
+TPM_NONOTIFY = 0x0080
+TPM_RETURNCMD = 0x0100
+IMAGE_ICON = 1
+LR_LOADFROMFILE = 0x0010
+LR_DEFAULTSIZE = 0x0040
+IDI_APPLICATION = 32512
+TRAY_MENU_SHOW = 1001
+TRAY_MENU_QUICK = 1002
+TRAY_MENU_EXIT = 1003
+
+LRESULT = ctypes.c_ssize_t
+WNDPROC = ctypes.WINFUNCTYPE(
+    LRESULT,
+    wintypes.HWND,
+    wintypes.UINT,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+)
+
+
+class WndClass(ctypes.Structure):
+    _fields_ = [
+        ("style", wintypes.UINT),
+        ("lpfnWndProc", WNDPROC),
+        ("cbClsExtra", ctypes.c_int),
+        ("cbWndExtra", ctypes.c_int),
+        ("hInstance", wintypes.HINSTANCE),
+        ("hIcon", wintypes.HICON),
+        ("hCursor", wintypes.HANDLE),
+        ("hbrBackground", wintypes.HBRUSH),
+        ("lpszMenuName", wintypes.LPCWSTR),
+        ("lpszClassName", wintypes.LPCWSTR),
+    ]
+
+
+class NotifyIconData(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("hWnd", wintypes.HWND),
+        ("uID", wintypes.UINT),
+        ("uFlags", wintypes.UINT),
+        ("uCallbackMessage", wintypes.UINT),
+        ("hIcon", wintypes.HICON),
+        ("szTip", wintypes.WCHAR * 128),
+        ("dwState", wintypes.DWORD),
+        ("dwStateMask", wintypes.DWORD),
+        ("szInfo", wintypes.WCHAR * 256),
+        ("uTimeout", wintypes.UINT),
+        ("szInfoTitle", wintypes.WCHAR * 64),
+        ("dwInfoFlags", wintypes.DWORD),
+    ]
 
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
@@ -180,13 +259,288 @@ class AppConfig:
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
+shell32 = ctypes.windll.shell32
 kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
 kernel32.CreateMutexW.restype = wintypes.HANDLE
 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 kernel32.CloseHandle.restype = wintypes.BOOL
+kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+kernel32.GetModuleHandleW.restype = wintypes.HINSTANCE
 user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
 user32.FindWindowW.restype = wintypes.HWND
+user32.RegisterClassW.argtypes = [ctypes.POINTER(WndClass)]
+user32.RegisterClassW.restype = wintypes.ATOM
+user32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
+user32.UnregisterClassW.restype = wintypes.BOOL
+user32.CreateWindowExW.argtypes = [
+    wintypes.DWORD,
+    wintypes.LPCWSTR,
+    wintypes.LPCWSTR,
+    wintypes.DWORD,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.HWND,
+    wintypes.HMENU,
+    wintypes.HINSTANCE,
+    ctypes.c_void_p,
+]
+user32.CreateWindowExW.restype = wintypes.HWND
+user32.DefWindowProcW.argtypes = [
+    wintypes.HWND,
+    wintypes.UINT,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+]
+user32.DefWindowProcW.restype = LRESULT
+user32.DestroyWindow.argtypes = [wintypes.HWND]
+user32.DestroyWindow.restype = wintypes.BOOL
+user32.PostMessageW.argtypes = [
+    wintypes.HWND,
+    wintypes.UINT,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+]
+user32.PostMessageW.restype = wintypes.BOOL
+user32.GetMessageW.argtypes = [
+    ctypes.POINTER(wintypes.MSG),
+    wintypes.HWND,
+    wintypes.UINT,
+    wintypes.UINT,
+]
+user32.GetMessageW.restype = ctypes.c_int
+user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+user32.TranslateMessage.restype = wintypes.BOOL
+user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+user32.DispatchMessageW.restype = LRESULT
+user32.PostQuitMessage.argtypes = [ctypes.c_int]
+user32.RegisterHotKey.argtypes = [
+    wintypes.HWND,
+    ctypes.c_int,
+    wintypes.UINT,
+    wintypes.UINT,
+]
+user32.RegisterHotKey.restype = wintypes.BOOL
+user32.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.UnregisterHotKey.restype = wintypes.BOOL
+user32.LoadImageW.argtypes = [
+    wintypes.HINSTANCE,
+    wintypes.LPCWSTR,
+    wintypes.UINT,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.UINT,
+]
+user32.LoadImageW.restype = wintypes.HANDLE
+user32.LoadIconW.argtypes = [wintypes.HINSTANCE, ctypes.c_void_p]
+user32.LoadIconW.restype = wintypes.HICON
+user32.CreatePopupMenu.restype = wintypes.HMENU
+user32.AppendMenuW.argtypes = [
+    wintypes.HMENU,
+    wintypes.UINT,
+    ctypes.c_size_t,
+    wintypes.LPCWSTR,
+]
+user32.AppendMenuW.restype = wintypes.BOOL
+user32.TrackPopupMenu.argtypes = [
+    wintypes.HMENU,
+    wintypes.UINT,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.HWND,
+    ctypes.c_void_p,
+]
+user32.TrackPopupMenu.restype = wintypes.UINT
+user32.DestroyMenu.argtypes = [wintypes.HMENU]
+user32.DestroyMenu.restype = wintypes.BOOL
+user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+user32.GetCursorPos.restype = wintypes.BOOL
+shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(NotifyIconData)]
+shell32.Shell_NotifyIconW.restype = wintypes.BOOL
 INSTANCE_MUTEX_NAME = "Local\\WeChatTTSWidget"
+
+
+class WinTrayController:
+    """Own a native Windows tray icon and Ctrl+Alt+Z global hotkey."""
+
+    def __init__(self, actions: "queue.SimpleQueue[str]") -> None:
+        self.actions = actions
+        self.hwnd: int | None = None
+        self.hotkey_registered = False
+        self.error: str | None = None
+        self._ready = threading.Event()
+        self._thread = threading.Thread(
+            target=self._message_loop,
+            name="wechat-tts-tray",
+            daemon=True,
+        )
+        self._wnd_proc: WNDPROC | None = None
+        self._notify_data: NotifyIconData | None = None
+        self._class_name = f"WeChatTTSVoiceBubbleTray_{os.getpid()}"
+
+    def start(self) -> None:
+        self._thread.start()
+        self._ready.wait(timeout=3.0)
+        if self.error:
+            raise RuntimeError(self.error)
+        if not self.hwnd:
+            raise RuntimeError("系统托盘初始化超时。")
+
+    def stop(self) -> None:
+        hwnd = self.hwnd
+        if hwnd:
+            user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+        if self._thread.is_alive() and threading.current_thread() is not self._thread:
+            self._thread.join(timeout=2.0)
+
+    def _load_icon(self) -> int:
+        icon = 0
+        for candidate in (APP_ICON_PATH, Path(sys.executable).resolve()):
+            if not candidate.is_file():
+                continue
+            icon = user32.LoadImageW(
+                None,
+                str(candidate),
+                IMAGE_ICON,
+                0,
+                0,
+                LR_LOADFROMFILE | LR_DEFAULTSIZE,
+            )
+            if icon:
+                break
+        if not icon:
+            icon = user32.LoadIconW(None, ctypes.c_void_p(IDI_APPLICATION))
+        return int(icon or 0)
+
+    def _show_menu(self, hwnd: int) -> None:
+        menu = user32.CreatePopupMenu()
+        if not menu:
+            return
+        try:
+            user32.AppendMenuW(menu, MF_STRING, TRAY_MENU_SHOW, "打开主窗口")
+            user32.AppendMenuW(
+                menu,
+                MF_STRING,
+                TRAY_MENU_QUICK,
+                "快速发送    Ctrl+Alt+Z",
+            )
+            user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
+            user32.AppendMenuW(menu, MF_STRING, TRAY_MENU_EXIT, "退出")
+            point = wintypes.POINT()
+            if not user32.GetCursorPos(ctypes.byref(point)):
+                return
+            user32.SetForegroundWindow(hwnd)
+            command = user32.TrackPopupMenu(
+                menu,
+                TPM_RIGHTBUTTON | TPM_NONOTIFY | TPM_RETURNCMD,
+                point.x,
+                point.y,
+                0,
+                hwnd,
+                None,
+            )
+            if command == TRAY_MENU_SHOW:
+                self.actions.put("show")
+            elif command == TRAY_MENU_QUICK:
+                self.actions.put("quick")
+            elif command == TRAY_MENU_EXIT:
+                self.actions.put("exit")
+            user32.PostMessageW(hwnd, WM_NULL, 0, 0)
+        finally:
+            user32.DestroyMenu(menu)
+
+    def _window_proc(self, hwnd: int, message: int, wparam: int, lparam: int) -> int:
+        if message == TRAY_CALLBACK_MESSAGE:
+            if lparam in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
+                self.actions.put("show")
+            elif lparam == WM_RBUTTONUP:
+                self._show_menu(hwnd)
+            return 0
+        if message == WM_HOTKEY and wparam == HOTKEY_ID:
+            self.actions.put("quick")
+            return 0
+        if message == WM_DESTROY:
+            if self.hotkey_registered:
+                user32.UnregisterHotKey(hwnd, HOTKEY_ID)
+                self.hotkey_registered = False
+            if self._notify_data is not None:
+                shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(self._notify_data))
+            self.hwnd = None
+            user32.PostQuitMessage(0)
+            return 0
+        return int(user32.DefWindowProcW(hwnd, message, wparam, lparam))
+
+    def _message_loop(self) -> None:
+        instance = kernel32.GetModuleHandleW(None)
+        registered = False
+        try:
+            self._wnd_proc = WNDPROC(self._window_proc)
+            window_class = WndClass()
+            window_class.lpfnWndProc = self._wnd_proc
+            window_class.hInstance = instance
+            window_class.lpszClassName = self._class_name
+            if not user32.RegisterClassW(ctypes.byref(window_class)):
+                raise ctypes.WinError()
+            registered = True
+
+            hwnd = user32.CreateWindowExW(
+                0,
+                self._class_name,
+                APP_NAME,
+                0,
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                instance,
+                None,
+            )
+            if not hwnd:
+                raise ctypes.WinError()
+            self.hwnd = int(hwnd)
+
+            notify_data = NotifyIconData()
+            notify_data.cbSize = ctypes.sizeof(NotifyIconData)
+            notify_data.hWnd = hwnd
+            notify_data.uID = TRAY_ICON_ID
+            notify_data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
+            notify_data.uCallbackMessage = TRAY_CALLBACK_MESSAGE
+            notify_data.hIcon = self._load_icon()
+            notify_data.szTip = APP_NAME
+            self._notify_data = notify_data
+            if not shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(notify_data)):
+                raise ctypes.WinError()
+
+            self.hotkey_registered = bool(
+                user32.RegisterHotKey(
+                    hwnd,
+                    HOTKEY_ID,
+                    MOD_CONTROL | MOD_ALT | MOD_NOREPEAT,
+                    VK_Z,
+                )
+            )
+            if not self.hotkey_registered:
+                logging.warning("注册全局快捷键 Ctrl+Alt+Z 失败，错误码=%d", kernel32.GetLastError())
+            self._ready.set()
+
+            message = wintypes.MSG()
+            while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
+                user32.TranslateMessage(ctypes.byref(message))
+                user32.DispatchMessageW(ctypes.byref(message))
+        except Exception as error:
+            self.error = str(error)
+            logging.exception("系统托盘初始化失败")
+            self._ready.set()
+        finally:
+            if self.hwnd:
+                user32.DestroyWindow(self.hwnd)
+                self.hwnd = None
+            if registered:
+                user32.UnregisterClassW(self._class_name, instance)
 
 
 def acquire_single_instance() -> int | None:
@@ -197,8 +551,7 @@ def acquire_single_instance() -> int | None:
     if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
         hwnd = user32.FindWindowW(None, APP_NAME)
         if hwnd:
-            if user32.IsIconic(hwnd):
-                user32.ShowWindow(hwnd, 9)
+            user32.ShowWindow(hwnd, 9)
             user32.SetForegroundWindow(hwnd)
         kernel32.CloseHandle(handle)
         return None
@@ -524,6 +877,111 @@ class SettingsDialog(ctk.CTkToplevel):
         self.destroy()
 
 
+class QuickSendWindow(ctk.CTkToplevel):
+    """A borderless text-only surface opened by the global hotkey."""
+
+    def __init__(self, owner: "WidgetApp") -> None:
+        super().__init__(owner.root)
+        self.owner = owner
+        self._focus_confirmed = False
+        self.title("快速发送语音")
+        self.geometry("520x132")
+        self.resizable(False, False)
+        self.overrideredirect(True)
+        self.configure(fg_color=BORDER)
+        self.protocol("WM_DELETE_WINDOW", self.hide)
+        self.bind("<Escape>", lambda _event: self.hide())
+
+        self.text = ctk.CTkTextbox(
+            self,
+            height=130,
+            wrap="word",
+            corner_radius=16,
+            border_width=1,
+            border_color=PRIMARY,
+            fg_color=CARD,
+            text_color=TEXT,
+            font=ctk.CTkFont(FONT_FAMILY, 14),
+            scrollbar_button_color="#C8D8CF",
+            scrollbar_button_hover_color="#AFC5B8",
+            activate_scrollbars=True,
+            undo=True,
+        )
+        self.text.pack(fill="both", expand=True, padx=1, pady=1)
+        self.text.bind("<KeyRelease>", self.on_text_modified)
+        self.text.bind("<Return>", self.on_return)
+        self.text.bind(
+            "<<Paste>>", lambda _event: self.after(10, self.on_text_modified)
+        )
+        self.withdraw()
+
+    def show(self) -> None:
+        if not self.winfo_exists() or self.owner.busy:
+            return
+        self.update_idletasks()
+        width = self.winfo_width() or 520
+        height = self.winfo_height() or 132
+        left = max(0, (self.winfo_screenwidth() - width) // 2)
+        top = max(0, (self.winfo_screenheight() - height) // 3)
+        self.geometry(f"{width}x{height}+{left}+{top}")
+        self._focus_confirmed = False
+        self.deiconify()
+        self.lift()
+        self.attributes("-topmost", True)
+        self._focus_text()
+        self.after_idle(self._focus_text)
+        self.after(60, self._focus_text)
+        self.after(220, lambda: self.attributes("-topmost", False))
+
+    def _focus_text(self, retries: int = 3) -> None:
+        if not self.winfo_exists() or self.state() == "withdrawn":
+            return
+        self.lift()
+        self.focus_force()
+        self.text.focus_force()
+        self.text.mark_set("insert", "end-1c")
+        self.text.see("insert")
+        if self.focus_get() == self.text._textbox:
+            if not self._focus_confirmed:
+                logging.info("快速发送浮层已获得文本输入焦点")
+                self._focus_confirmed = True
+            return
+        if retries > 0:
+            self.after(50, lambda: self._focus_text(retries - 1))
+        else:
+            logging.warning("快速发送浮层未能获得文本输入焦点")
+
+    def hide(self) -> None:
+        if self.winfo_exists():
+            self.attributes("-topmost", False)
+            self.withdraw()
+
+    def on_text_modified(self, _event: tk.Event | None = None) -> None:
+        content = self.text.get("1.0", "end-1c")
+        if len(content) > 500:
+            content = content[:500]
+            self.text.delete("1.0", "end")
+            self.text.insert("1.0", content)
+
+    def set_busy(self, busy: bool) -> None:
+        self.text.configure(state="disabled" if busy else "normal")
+
+    def on_return(self, event: tk.Event) -> str | None:
+        if event.state & 0x0001:  # Shift+Enter inserts a newline.
+            return None
+        self.send()
+        return "break"
+
+    def send(self) -> None:
+        text = self.text.get("1.0", "end-1c").strip()
+        if text and self.owner.start_send_text(text, source="quick"):
+            self.hide()
+
+    def send_finished(self) -> None:
+        self.text.delete("1.0", "end")
+        self.on_text_modified()
+
+
 class WidgetApp:
     def __init__(self) -> None:
         self.config = AppConfig()
@@ -533,19 +991,50 @@ class WidgetApp:
 
         self.root = ctk.CTk()
         self.root.title(APP_NAME)
+        self.root.iconbitmap(default=str(APP_ICON_PATH))
         self.root.geometry(self.config.geometry)
         self.root.minsize(480, 550)
         self.root.configure(fg_color=SURFACE)
         self.busy = False
         self.preflight_ok = False
+        self.active_send_source: str | None = None
+        self._quitting = False
+        self._system_actions: queue.SimpleQueue[str] = queue.SimpleQueue()
+        self.tray: WinTrayController | None = None
         self._waveform_icon = svg_icon("graphic_eq", "#FFFFFF", 24)
         self._settings_icon = svg_icon("settings", "#34413A", 22)
         self._chevron_icon = svg_icon("chevron_right", MUTED, 18)
         self._mic_icon = svg_icon("mic", "#FFFFFF", 22)
         self._trash_icon = svg_icon("delete", PRIMARY, 21)
         self._build_ui()
+        self.quick_window = QuickSendWindow(self)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.bind("<Control-Return>", self.on_shortcut)
+        try:
+            self.tray = WinTrayController(self._system_actions)
+            self.tray.start()
+        except Exception as error:
+            logging.exception("启动系统托盘失败")
+            self.tray = None
+            self.root.after(
+                100,
+                lambda detail=str(error): messagebox.showwarning(
+                    "系统托盘不可用",
+                    f"无法启动系统托盘，关闭窗口将直接退出。\n\n{detail}",
+                    parent=self.root,
+                ),
+            )
+        else:
+            if not self.tray.hotkey_registered:
+                self.root.after(
+                    100,
+                    lambda: messagebox.showwarning(
+                        "快捷键不可用",
+                        "Ctrl+Alt+Z 已被其他程序占用。仍可从托盘菜单打开快速发送窗口。",
+                        parent=self.root,
+                    ),
+                )
+        self.root.after(75, self.process_system_actions)
         self.root.after(150, self.refresh_preflight)
         self.root.after(2500, self.periodic_refresh)
 
@@ -817,9 +1306,77 @@ class WidgetApp:
         self.update_send_button()
 
     def periodic_refresh(self) -> None:
-        if self.root.winfo_exists():
+        if not self._quitting and self.root.winfo_exists():
             self.refresh_preflight()
             self.root.after(2500, self.periodic_refresh)
+
+    def process_system_actions(self) -> None:
+        if self._quitting or not self.root.winfo_exists():
+            return
+        while True:
+            try:
+                action = self._system_actions.get_nowait()
+            except queue.Empty:
+                break
+            if action == "show":
+                self.show_main_window()
+            elif action == "quick":
+                self.show_quick_window()
+            elif action == "exit":
+                self.request_exit()
+        if not self._quitting:
+            self.root.after(75, self.process_system_actions)
+
+    def show_main_window(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        self.root.attributes("-topmost", True)
+        self.root.after(160, lambda: self.root.attributes("-topmost", False))
+        self.root.after(20, self.text.focus_set)
+
+    def show_quick_window(self) -> None:
+        self.quick_window.show()
+
+    def hide_to_tray(self) -> None:
+        if self.tray is None:
+            self.shutdown()
+            return
+        if self.root.state() == "normal":
+            self.config.geometry = self.root.geometry()
+            try:
+                self.config.save()
+            except Exception:
+                logging.exception("隐藏到托盘时保存配置失败")
+        self.root.withdraw()
+
+    def request_exit(self) -> None:
+        if self.busy:
+            self.show_main_window()
+            messagebox.showinfo(
+                "正在发送", "请等待当前语音发送完成后再退出。", parent=self.root
+            )
+            return
+        self.shutdown()
+
+    def shutdown(self) -> None:
+        if self._quitting:
+            return
+        self._quitting = True
+        if self.root.state() == "normal":
+            self.config.geometry = self.root.geometry()
+        try:
+            self.config.save()
+        except Exception:
+            logging.exception("退出时保存配置失败")
+        try:
+            if self.quick_window.winfo_exists():
+                self.quick_window.destroy()
+        except tk.TclError:
+            pass
+        if self.tray is not None:
+            self.tray.stop()
+            self.tray = None
+        self.root.destroy()
 
     def on_shortcut(self, _event: tk.Event) -> str:
         if str(self.send_button.cget("state")) != "disabled":
@@ -827,29 +1384,40 @@ class WidgetApp:
         return "break"
 
     def start_send(self) -> None:
-        if self.busy:
-            return
         text = self.text.get("1.0", "end-1c").strip()
-        if not text:
-            return
+        if text:
+            self.start_send_text(text, source="main")
+
+    def start_send_text(self, text: str, *, source: str) -> bool:
+        if self.busy or not text:
+            return False
         ok, detail = run_preflight(self.config)
         if not ok:
             self.preflight_ok = False
             self.set_status(detail, error=True)
             self.update_send_button()
-            return
+            if source == "quick":
+                messagebox.showerror("无法发送", detail, parent=self.quick_window)
+            return False
 
         self.busy = True
+        self.active_send_source = source
         self.text.configure(state="disabled")
         self.clear_button.configure(state="disabled")
         self.send_button.configure(
             state="disabled", text="生成中…", image=None, fg_color="#A9CEBA"
         )
+        self.quick_window.set_busy(True)
         self.set_status("正在生成 TTS 音频…")
         threading.Thread(target=self._send_worker, args=(text,), daemon=True).start()
+        return True
 
     def _post_progress(self, text: str) -> None:
-        self.root.after(0, lambda: self.set_status(text))
+        self.root.after(0, lambda: self._apply_progress(text))
+
+    def _apply_progress(self, text: str) -> None:
+        self.set_status(text)
+        self.quick_window.set_busy(True)
 
     def _send_worker(self, text: str) -> None:
         temp_path: Path | None = None
@@ -927,33 +1495,44 @@ class WidgetApp:
         self.clear_button.configure(state="normal")
         self.send_button.configure(text="发送语音", image=self._mic_icon)
         self.update_send_button()
+        self.quick_window.set_busy(False)
 
     def _send_finished(self, duration: float) -> None:
+        source = self.active_send_source
+        self.active_send_source = None
         self._restore_controls()
-        self.text.delete("1.0", "end")
-        self.on_text_modified()
+        if source == "quick":
+            self.quick_window.send_finished()
+        else:
+            self.text.delete("1.0", "end")
+            self.on_text_modified()
         self.set_status(f"已触发发送 · 语音约 {duration:.1f} 秒")
         self.root.bell()
 
     def _send_failed(self, detail: str) -> None:
+        source = self.active_send_source
+        self.active_send_source = None
         self._restore_controls()
         self.set_status(detail, error=True)
-        messagebox.showerror("发送失败", detail, parent=self.root)
+        if source == "quick":
+            self.quick_window.show()
+            parent: tk.Misc = self.quick_window
+        else:
+            self.show_main_window()
+            parent = self.root
+        messagebox.showerror("发送失败", detail, parent=parent)
 
     def on_close(self) -> None:
-        if self.busy:
-            messagebox.showinfo("正在发送", "请等待当前语音发送完成。", parent=self.root)
-            return
-        self.config.geometry = self.root.geometry()
-        try:
-            self.config.save()
-        except Exception:
-            logging.exception("关闭时保存配置失败")
-        self.root.destroy()
+        self.hide_to_tray()
 
     def run(self) -> None:
         self.text.focus_set()
-        self.root.mainloop()
+        try:
+            self.root.mainloop()
+        finally:
+            if self.tray is not None:
+                self.tray.stop()
+                self.tray = None
 
 
 if __name__ == "__main__":

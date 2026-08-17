@@ -29,6 +29,7 @@ try {
         --onedir `
         --windowed `
         --name $appName `
+        --icon "$projectRoot\assets\app-icon.ico" `
         --collect-all customtkinter `
         --collect-all resvg `
         --add-data "$projectRoot\assets;assets" `
